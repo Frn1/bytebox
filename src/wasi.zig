@@ -47,7 +47,7 @@ const WasiContext = struct {
         };
 
         {
-            var cwd_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var cwd_buffer: [std.fs.max_path_bytes]u8 = undefined;
             const cwd: []const u8 = try std.process.getCwd(&cwd_buffer);
             context.cwd = try context.strings.put(cwd);
         }
@@ -135,7 +135,7 @@ const WasiContext = struct {
         // validate the scope of the path never leaves the preopen root
         {
             var depth: i32 = 0;
-            var token_iter = std.mem.tokenize(u8, path, &[_]u8{ '/', '\\' });
+            var token_iter = std.mem.tokenizeAny(u8, path, &[_]u8{ '/', '\\' });
             while (token_iter.next()) |item| {
                 if (std.mem.eql(u8, item, "..")) {
                     depth -= 1;
@@ -148,7 +148,7 @@ const WasiContext = struct {
             }
         }
 
-        var static_path_buffer: [std.fs.MAX_PATH_BYTES * 2]u8 = undefined;
+        var static_path_buffer: [std.fs.max_path_bytes * 2]u8 = undefined;
         var fba = std.heap.FixedBufferAllocator.init(&static_path_buffer);
         const allocator = fba.allocator();
 
@@ -223,7 +223,7 @@ const WasiContext = struct {
                 var info: *FdInfo = undefined;
                 var fd_table_index: u32 = undefined;
 
-                if (self.fd_table_freelist.popOrNull()) |free_index| {
+                if (self.fd_table_freelist.pop()) |free_index| {
                     fd_table_index = free_index;
                     info = &self.fd_table.items[free_index];
                 } else {
@@ -622,8 +622,10 @@ const WindowsApi = struct {
     const SYMBOLIC_LINK_FLAG_DIRECTORY: DWORD = 0x1;
     const SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE: DWORD = 0x2;
 
+    extern "kernel32" fn GetSystemTimeAsFileTime(lpSystemTimeAsFileTime: *FILETIME) callconv(WINAPI) void;
     extern "kernel32" fn GetSystemTimeAdjustment(timeAdjustment: *DWORD, timeIncrement: *DWORD, timeAdjustmentDisabled: *BOOL) callconv(WINAPI) BOOL;
-    extern "kernel32" fn GetThreadTimes(in_hProcess: HANDLE, creationTime: *FILETIME, exitTime: *FILETIME, kernelTime: *FILETIME, userTime: *FILETIME) callconv(WINAPI) BOOL;
+    extern "kernel32" fn GetProcessTimes(in_hProcess: HANDLE, creationTime: *FILETIME, exitTime: *FILETIME, kernelTime: *FILETIME, userTime: *FILETIME) callconv(WINAPI) BOOL;
+    extern "kernel32" fn GetThreadTimes(in_hThread: HANDLE, creationTime: *FILETIME, exitTime: *FILETIME, kernelTime: *FILETIME, userTime: *FILETIME) callconv(WINAPI) BOOL;
     extern "kernel32" fn GetFileInformationByHandle(file: HANDLE, fileInformation: *BY_HANDLE_FILE_INFORMATION) callconv(WINAPI) BOOL;
     extern "kernel32" fn CreateSymbolicLinkW(symlinkFileName: LPCWSTR, lpTargetFileName: LPCWSTR, flags: DWORD) callconv(WINAPI) BOOL;
     extern "kernel32" fn SetEndOfFile(file: HANDLE) callconv(WINAPI) BOOL;
@@ -646,7 +648,7 @@ const Helpers = struct {
     }
 
     fn resolvePath(fd_info: *const WasiContext.FdInfo, path_relative: []const u8, path_buffer: []u8, _: *Errno) ?[]const u8 {
-        var fba = std.heap.FixedBufferAllocator.init(path_buffer[std.fs.MAX_PATH_BYTES..]);
+        var fba = std.heap.FixedBufferAllocator.init(path_buffer[std.fs.max_path_bytes..]);
         const allocator = fba.allocator();
 
         const paths = [_][]const u8{ fd_info.path_absolute, path_relative };
@@ -1106,9 +1108,8 @@ const Helpers = struct {
     }
 
     fn fdFilestatSetTimesWindows(fd: std.posix.fd_t, timestamp_wasi_access: u64, timestamp_wasi_modified: u64, fstflags: u32, errno: *Errno) void {
-        var filetime_now: WindowsApi.FILETIME = undefined; // helps avoid 2 calls to GetSystemTimeAsFiletime
+        var filetime_now: WindowsApi.FILETIME = undefined; // helps avoid 2 calls to GetSystemTimeAsFileTime
         var filetime_now_needs_set: bool = true;
-
         var access_time: std.os.windows.FILETIME = undefined;
         var access_time_was_set: bool = false;
         const flags: std.os.wasi.fstflags_t = @bitCast(@as(u16, @intCast(fstflags)));
@@ -1117,7 +1118,7 @@ const Helpers = struct {
             access_time_was_set = true;
         }
         if (flags.ATIM_NOW) {
-            std.os.windows.kernel32.GetSystemTimeAsFileTime(&filetime_now);
+            WindowsApi.GetSystemTimeAsFileTime(&filetime_now);
             filetime_now_needs_set = false;
             access_time = filetime_now;
             access_time_was_set = true;
@@ -1131,7 +1132,7 @@ const Helpers = struct {
         }
         if (flags.MTIM_NOW) {
             if (filetime_now_needs_set) {
-                std.os.windows.kernel32.GetSystemTimeAsFileTime(&filetime_now);
+                WindowsApi.GetSystemTimeAsFileTime(&filetime_now);
             }
             modify_time = filetime_now;
             modify_time_was_set = true;
@@ -1501,10 +1502,10 @@ const Helpers = struct {
 
             const filename_utf16le = @as([*]u16, @ptrCast(&file_info.FileName))[0 .. file_info.FileNameLength / @sizeOf(u16)];
 
-            var static_path_buffer: [std.fs.MAX_PATH_BYTES * 2]u8 = undefined;
+            var static_path_buffer: [std.fs.max_path_bytes * 2]u8 = undefined;
             var fba = std.heap.FixedBufferAllocator.init(&static_path_buffer);
             const allocator = fba.allocator();
-            const filename: []u8 = std.unicode.utf16leToUtf8Alloc(allocator, filename_utf16le) catch unreachable;
+            const filename: []u8 = std.unicode.utf16LeToUtf8Alloc(allocator, filename_utf16le) catch unreachable;
 
             var filetype: std.os.wasi.filetype_t = .REGULAR_FILE;
             if (file_info.FileAttributes & std.os.windows.FILE_ATTRIBUTE_DIRECTORY != 0) {
@@ -1790,7 +1791,7 @@ fn wasi_clock_time_get(_: ?*anyopaque, module: *ModuleInstance, params: [*]const
             switch (clockid) {
                 std.os.wasi.clockid_t.REALTIME => {
                     var ft: WindowsApi.FILETIME = undefined;
-                    std.os.windows.kernel32.GetSystemTimeAsFileTime(&ft);
+                    WindowsApi.GetSystemTimeAsFileTime(&ft);
 
                     timestamp_ns = Helpers.windowsFiletimeToWasi(ft);
                 },
@@ -1809,7 +1810,7 @@ fn wasi_clock_time_get(_: ?*anyopaque, module: *ModuleInstance, params: [*]const
                     var exitTime: WindowsApi.FILETIME = undefined;
                     var kernelTime: WindowsApi.FILETIME = undefined;
                     var userTime: WindowsApi.FILETIME = undefined;
-                    if (std.os.windows.kernel32.GetProcessTimes(WindowsApi.GetCurrentProcess(), &createTime, &exitTime, &kernelTime, &userTime) == std.os.windows.TRUE) {
+                    if (WindowsApi.GetProcessTimes(WindowsApi.GetCurrentProcess(), &createTime, &exitTime, &kernelTime, &userTime) == std.os.windows.TRUE) {
                         const timestamp_100ns: u64 = Helpers.filetimeToU64(kernelTime) + Helpers.filetimeToU64(userTime);
                         timestamp_ns = timestamp_100ns * 100;
                     } else {
@@ -2494,7 +2495,7 @@ fn wasi_path_remove_directory(userdata: ?*anyopaque, module: *ModuleInstance, pa
         if (Helpers.getMemorySlice(module, path_mem_offset, path_mem_length, &errno)) |path| {
             if (context.fdLookup(fd_dir_wasi, &errno)) |fd_info| {
                 if (context.hasPathAccess(fd_info, path, &errno)) {
-                    var static_path_buffer: [std.fs.MAX_PATH_BYTES * 2]u8 = undefined;
+                    var static_path_buffer: [std.fs.max_path_bytes * 2]u8 = undefined;
                     if (Helpers.resolvePath(fd_info, path, &static_path_buffer, &errno)) |resolved_path| {
                         std.posix.unlinkat(FD_OS_INVALID, resolved_path, std.posix.AT.REMOVEDIR) catch |err| {
                             errno = Errno.translateError(err);
@@ -2530,7 +2531,7 @@ fn wasi_path_symlink(userdata: ?*anyopaque, module: *ModuleInstance, params: [*]
                     if (context.hasPathAccess(fd_info, link_contents, &errno)) {
                         if (context.hasPathAccess(fd_info, link_path, &errno)) {
                             if (builtin.os.tag == .windows) {
-                                var static_path_buffer: [std.fs.MAX_PATH_BYTES * 2]u8 = undefined;
+                                var static_path_buffer: [std.fs.max_path_bytes * 2]u8 = undefined;
                                 if (Helpers.resolvePath(fd_info, link_path, &static_path_buffer, &errno)) |resolved_link_path| {
                                     const w = std.os.windows;
 
@@ -2579,7 +2580,7 @@ fn wasi_path_unlink_file(userdata: ?*anyopaque, module: *ModuleInstance, params:
         if (Helpers.getMemorySlice(module, path_mem_offset, path_mem_length, &errno)) |path| {
             if (context.fdLookup(fd_dir_wasi, &errno)) |fd_info| {
                 if (context.hasPathAccess(fd_info, path, &errno)) {
-                    var static_path_buffer: [std.fs.MAX_PATH_BYTES * 2]u8 = undefined;
+                    var static_path_buffer: [std.fs.max_path_bytes * 2]u8 = undefined;
                     if (Helpers.resolvePath(fd_info, path, &static_path_buffer, &errno)) |resolved_path| {
                         std.posix.unlinkat(FD_OS_INVALID, resolved_path, 0) catch |err| {
                             errno = Errno.translateError(err);
@@ -2615,9 +2616,9 @@ fn wasi_random_get(_: ?*anyopaque, module: *ModuleInstance, params: [*]const Val
 }
 
 pub const WasiOpts = struct {
-    argv: ?[][]const u8 = null,
-    env: ?[][]const u8 = null,
-    dirs: ?[][]const u8 = null,
+    argv: ?[]const []const u8 = null,
+    env: ?[]const []const u8 = null,
+    dirs: ?[]const []const u8 = null,
 };
 
 pub fn initImports(opts: WasiOpts, allocator: std.mem.Allocator) !ModuleImportPackage {

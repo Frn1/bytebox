@@ -29,7 +29,7 @@ pub fn build(b: *Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const stable_array = b.dependency("zig-stable-array", .{
+    const stable_array = b.dependency("stable_array", .{
         .target = target,
         .optimize = optimize,
     });
